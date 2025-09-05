@@ -2,10 +2,10 @@ dataset= 'CULane'
 data_root= '/content/dataset_14_8' # Need to be modified before running
 
 epoch= 50
-batch_size= 32
+batch_size= 8 #32
 
 optimizer= 'SGD'
-learning_rate= 0.05
+learning_rate= 0.00625 #0.05
 weight_decay= 0.0001
 momentum= 0.9
 
@@ -29,7 +29,7 @@ resume= None
 
 test_model=''
 test_work_dir = ''
-tta=True
+tta= False #True
 
 num_lanes= 4
 var_loss_power= 2.0
