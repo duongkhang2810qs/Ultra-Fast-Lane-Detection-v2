@@ -11,11 +11,15 @@ from utils.common import get_work_dir, get_logger
 import time
 # from evaluation.eval_wrapper import eval_lane
 
-def train(net, data_loader, loss_dict, optimizer, scheduler,logger, epoch, metric_dict, dataset):
+def train(net, data_loader, loss_dict, optimizer, scheduler, logger, epoch, metric_dict, dataset):
     net.train()
     progress_bar = dist_tqdm(train_loader)
     if hasattr(progress_bar, 'set_description'):
         progress_bar.set_description(f"Epoch {epoch+1:03d}")
+
+    loss_sum = 0.0
+    n_batches = 0
+
     for b_idx, data_label in enumerate(progress_bar):
         global_step = epoch * len(data_loader) + b_idx
 
@@ -27,7 +31,7 @@ def train(net, data_loader, loss_dict, optimizer, scheduler,logger, epoch, metri
         optimizer.step()
         scheduler.step(global_step)
 
-
+        # log & hiển thị
         if global_step % 20 == 0:
             reset_metrics(metric_dict)
             update_metrics(metric_dict, results)
@@ -35,15 +39,19 @@ def train(net, data_loader, loss_dict, optimizer, scheduler,logger, epoch, metri
                 logger.add_scalar('metric/' + me_name, me_op.get(), global_step=global_step)
             logger.add_scalar('meta/lr', optimizer.param_groups[0]['lr'], global_step=global_step)
 
-            if hasattr(progress_bar,'set_postfix'):
+            if hasattr(progress_bar, 'set_postfix'):
                 kwargs = {me_name: '%.3f' % me_op.get() for me_name, me_op in zip(metric_dict['name'], metric_dict['op'])}
-                new_kwargs = {}
-                for k,v in kwargs.items():
-                    if 'lane' in k:
-                        continue
-                    new_kwargs[k] = v
-                progress_bar.set_postfix(loss=f'{loss:.3f}', 
-                                        **new_kwargs)
+                new_kwargs = {k: v for k, v in kwargs.items() if 'lane' not in k}
+                progress_bar.set_postfix(loss=f'{loss.item():.3f}', **new_kwargs)  # dùng .item()
+
+        # cộng dồn loss
+        loss_sum += loss.item()
+        n_batches += 1
+
+    avg_loss = loss_sum / max(1, n_batches)
+    logger.add_scalar('meta/epoch_train_loss', avg_loss, global_step=epoch)
+    return avg_loss
+
         
 
 if __name__ == "__main__":
@@ -114,19 +122,37 @@ if __name__ == "__main__":
     # cp_projects(cfg.auto_backup, work_dir)
     max_res = 0
     res = None
-    for epoch in range(resume_epoch, cfg.epoch):
 
-        train(net, train_loader, loss_dict, optimizer, scheduler,logger, epoch, metric_dict, cfg.dataset)
+    best_loss = float('inf')
+    best_path = None
+
+    for epoch in range(resume_epoch, cfg.epoch):
+        avg_loss = train(net, train_loader, loss_dict, optimizer, scheduler, logger, epoch, metric_dict, cfg.dataset)
         train_loader.reset()
 
-        if ((epoch + 1) % 5) == 0:
-          ckpt_path = save_model(net, optimizer, epoch, work_dir, distributed)
+        if (epoch + 1) % 5 == 0:
+            save_model(net, optimizer, epoch, work_dir, distributed, filename=f'ep{epoch+1:03d}.pth')
 
-        # res = eval_lane(net, cfg, ep = epoch, logger = logger)
-
-        # if res is not None and res > max_res:
-        #     max_res = res
-        #     save_model(net, optimizer, epoch, work_dir, distributed)
-        # logger.add_scalar('CuEval/X',max_res,global_step = epoch)
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            save_model(net, optimizer, epoch, work_dir, distributed, filename='best_model.pth')
 
     logger.close()
+
+
+    # for epoch in range(resume_epoch, cfg.epoch):
+
+    #     train(net, train_loader, loss_dict, optimizer, scheduler,logger, epoch, metric_dict, cfg.dataset)
+    #     train_loader.reset()
+
+    #     if ((epoch + 1) % 5) == 0:
+    #       ckpt_path = save_model(net, optimizer, epoch, work_dir, distributed)
+
+    #     # res = eval_lane(net, cfg, ep = epoch, logger = logger)
+
+    #     # if res is not None and res > max_res:
+    #     #     max_res = res
+    #     #     save_model(net, optimizer, epoch, work_dir, distributed)
+    #     # logger.add_scalar('CuEval/X',max_res,global_step = epoch)
+
+    # logger.close()
