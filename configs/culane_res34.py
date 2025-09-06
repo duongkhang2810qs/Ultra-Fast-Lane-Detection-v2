@@ -1,7 +1,7 @@
 dataset= 'CULane'
 data_root= '/content/dataset_14_8'
 
-epoch= 100 #50 
+epoch= 200 
 batch_size= 16
 
 optimizer= 'Adam' #'SGD'
@@ -10,10 +10,11 @@ weight_decay= 0.0001
 momentum= 0.9
 
 scheduler= 'multi'
-steps=  [60, 80, 90] #[25,38]
+steps=  [120, 160, 190]
 gamma= 0.1
+
 warmup= 'linear'
-warmup_iters= 121
+warmup_iters= 150
 
 use_aux= False
 griding_num= 200
