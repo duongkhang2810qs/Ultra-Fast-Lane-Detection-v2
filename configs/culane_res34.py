@@ -1,19 +1,19 @@
 dataset= 'CULane'
-data_root= '/content/dataset_14_8' # Need to be modified before running
+data_root= '/content/dataset_14_8'
 
-epoch= 50
-batch_size= 8 #32
+epoch= 50 #100
+batch_size= 16
 
 optimizer= 'SGD'
-learning_rate= 0.00625 #0.05
+learning_rate= 0.0125
 weight_decay= 0.0001
 momentum= 0.9
 
 scheduler= 'multi'
-steps= [25,38]
+steps= [25,38] #[60, 80, 90]
 gamma= 0.1
 warmup= 'linear'
-warmup_iters= 695
+warmup_iters= 121
 
 use_aux= False
 griding_num= 200
@@ -29,7 +29,7 @@ resume= None
 
 test_model=''
 test_work_dir = ''
-tta= False #True
+tta= True
 
 num_lanes= 4
 var_loss_power= 2.0
