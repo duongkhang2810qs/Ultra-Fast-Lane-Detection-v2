@@ -15,7 +15,7 @@ def train(net, data_loader, loss_dict, optimizer, scheduler,logger, epoch, metri
     net.train()
     progress_bar = dist_tqdm(train_loader)
     if hasattr(progress_bar, 'set_description'):
-        progress_bar.set_description(f"Epoch {epoch:03d}")
+        progress_bar.set_description(f"Epoch {epoch+1:03d}")
     for b_idx, data_label in enumerate(progress_bar):
         global_step = epoch * len(data_loader) + b_idx
 
@@ -119,7 +119,8 @@ if __name__ == "__main__":
         train(net, train_loader, loss_dict, optimizer, scheduler,logger, epoch, metric_dict, cfg.dataset)
         train_loader.reset()
 
-        ckpt_path = save_model(net, optimizer, epoch, work_dir, distributed)
+        if ((epoch + 1) % 5) == 0:
+          ckpt_path = save_model(net, optimizer, epoch, work_dir, distributed)
 
         # res = eval_lane(net, cfg, ep = epoch, logger = logger)
 
