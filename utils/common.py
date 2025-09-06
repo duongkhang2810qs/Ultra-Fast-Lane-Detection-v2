@@ -98,14 +98,16 @@ def merge_config():
     return args, cfg
 
 
-def save_model(net, optimizer, epoch,save_path, distributed):
+def save_model(net, optimizer, epoch, save_path, distributed, filename=None):
     if is_main_process():
         model_state_dict = net.state_dict()
         state = {'model': model_state_dict, 'optimizer': optimizer.state_dict()}
-        # state = {'model': model_state_dict}
         assert os.path.exists(save_path)
-        model_path = os.path.join(save_path, f'ep{epoch+1:03d}.pth')
+        if filename is None:
+            filename = f'ep{epoch+1:03d}.pth'
+        model_path = os.path.join(save_path, filename)
         torch.save(state, model_path)
+        return model_path
 
 import pathspec
 
