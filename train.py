@@ -9,11 +9,13 @@ from utils.common import calc_loss, get_model, get_train_loader, inference, merg
 from utils.common import get_work_dir, get_logger
 
 import time
-from evaluation.eval_wrapper import eval_lane
+# from evaluation.eval_wrapper import eval_lane
 
 def train(net, data_loader, loss_dict, optimizer, scheduler,logger, epoch, metric_dict, dataset):
     net.train()
     progress_bar = dist_tqdm(train_loader)
+    if hasattr(progress_bar, 'set_description'):
+        progress_bar.set_description(f"Epoch {epoch:03d}")
     for b_idx, data_label in enumerate(progress_bar):
         global_step = epoch * len(data_loader) + b_idx
 
@@ -40,7 +42,7 @@ def train(net, data_loader, loss_dict, optimizer, scheduler,logger, epoch, metri
                     if 'lane' in k:
                         continue
                     new_kwargs[k] = v
-                progress_bar.set_postfix(loss = '%.3f' % float(loss), 
+                progress_bar.set_postfix(loss=f'{loss:.3f}', 
                                         **new_kwargs)
         
 
@@ -117,11 +119,13 @@ if __name__ == "__main__":
         train(net, train_loader, loss_dict, optimizer, scheduler,logger, epoch, metric_dict, cfg.dataset)
         train_loader.reset()
 
-        res = eval_lane(net, cfg, ep = epoch, logger = logger)
+        ckpt_path = save_model(net, optimizer, epoch, work_dir, distributed)
 
-        if res is not None and res > max_res:
-            max_res = res
-            save_model(net, optimizer, epoch, work_dir, distributed)
-        logger.add_scalar('CuEval/X',max_res,global_step = epoch)
+        # res = eval_lane(net, cfg, ep = epoch, logger = logger)
+
+        # if res is not None and res > max_res:
+        #     max_res = res
+        #     save_model(net, optimizer, epoch, work_dir, distributed)
+        # logger.add_scalar('CuEval/X',max_res,global_step = epoch)
 
     logger.close()
