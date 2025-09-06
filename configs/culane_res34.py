@@ -1,16 +1,16 @@
 dataset= 'CULane'
 data_root= '/content/dataset_14_8'
 
-epoch= 50 #100
+epoch= 100 #50 
 batch_size= 16
 
-optimizer= 'SGD'
-learning_rate= 0.0125
+optimizer= 'Adam' #'SGD'
+learning_rate= 3e-4 #0.0125
 weight_decay= 0.0001
 momentum= 0.9
 
 scheduler= 'multi'
-steps= [25,38] #[60, 80, 90]
+steps=  [60, 80, 90] #[25,38]
 gamma= 0.1
 warmup= 'linear'
 warmup_iters= 121
