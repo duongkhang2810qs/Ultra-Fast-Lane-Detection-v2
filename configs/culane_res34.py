@@ -1,5 +1,5 @@
 dataset= 'CULane'
-data_root= '/content/dataset_14_8'
+data_root= '/content/Custom_Dataset'
 
 epoch= 200 
 batch_size= 16
