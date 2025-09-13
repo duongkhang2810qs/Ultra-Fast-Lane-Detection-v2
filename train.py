@@ -110,7 +110,7 @@ if __name__ == "__main__":
         net.load_state_dict(resume_dict['model'])
         if 'optimizer' in resume_dict.keys():
             optimizer.load_state_dict(resume_dict['optimizer'])
-        resume_epoch = int(os.path.split(cfg.resume)[1][2:5]) + 1
+        resume_epoch = int(os.path.split(cfg.resume)[1][2:5])
     else:
         resume_epoch = 0
 
