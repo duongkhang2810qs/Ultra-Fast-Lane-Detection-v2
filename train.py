@@ -130,12 +130,13 @@ if __name__ == "__main__":
         avg_loss = train(net, train_loader, loss_dict, optimizer, scheduler, logger, epoch, metric_dict, cfg.dataset)
         train_loader.reset()
 
-        if (epoch + 1) % 5 == 0:
-            save_model(net, optimizer, epoch, work_dir, distributed, filename=f'ep{epoch+1:03d}.pth')
+        # if (epoch + 1) % 5 == 0:
+        #     save_model(net, optimizer, epoch, work_dir, distributed, filename=f'ep{epoch+1:03d}.pth')
 
         if avg_loss < best_loss:
             best_loss = avg_loss
             save_model(net, optimizer, epoch, work_dir, distributed, filename='bestmodel.pth')
+            print("Save at epoch ", epoch+1)
 
     logger.close()
 
