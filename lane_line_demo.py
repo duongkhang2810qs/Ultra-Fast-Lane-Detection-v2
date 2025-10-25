@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 from collections import deque, defaultdict
 from PIL import Image
+import torch.nn.functional as F
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 
@@ -278,7 +279,13 @@ if __name__ == "__main__":
         xn = apply_standardizer(feats[None,:], mean_loaded, std_loaded)
         with torch.no_grad():
             logits = mlp(torch.from_numpy(xn).float().to(device))
-            pred = int(torch.argmax(logits, dim=1).item())
+            # pred = int(torch.argmax(logits, dim=1).item())
+            probs = F.softmax(logits, dim=1)[0]
+            p_solid, p_dashed = float(probs[0]), float(probs[1])
+            if p_dashed >= 0.4:
+                pred = 1  # dashed
+            else:
+                pred = 0  # solid
         return pred  # 0=solid, 1=dashed
 
     frame_idx = 0
