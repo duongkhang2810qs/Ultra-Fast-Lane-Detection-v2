@@ -68,7 +68,7 @@ def patch_presence(bgr, cx, cy, patch_half=6, canny=(50,150),
                    edge_thr=0.10, paint_thr=0.08) -> int:
     h,w = bgr.shape[:2]
     x0,x1 = max(0,int(cx)-patch_half), min(w,int(cx)+patch_half+1)
-    y0,y1 = max(0,int(cy)-patch_half), min(h,int(cy)+patch_half+1)
+    y0,y1 = max(0, int(cy)-patch_half), min(h, int(cy)+patch_half+1)
     if x1<=x0 or y1<=y0: 
         return 0
     patch = bgr[y0:y1, x0:x1]
@@ -133,6 +133,47 @@ def geom_feats(poly):
         mean_abs_d2x=float(np.abs(d2x).mean()) if len(d2x)>0 else 0.0
     )
 
+# ====== BEV helpers ======
+def parse_norm_quad(s):
+    """
+    Parse 'x1,y1;x2,y2;x3,y3;x4,y4' with normalized coords (0..1) in order TL;TR;BR;BL
+    Returns list of (x_norm, y_norm)
+    """
+    pts = []
+    for pair in s.split(';'):
+        x,y = pair.split(',')
+        pts.append((float(x), float(y)))
+    if len(pts) != 4:
+        raise ValueError("bev_src_norm phải gồm đúng 4 điểm TL;TR;BR;BL")
+    return pts
+
+def compute_H_from_norm(out_w, out_h, bev_w, bev_h, bev_src_norm):
+    # bev_src_norm: list of 4 (xn,yn) normalized 0..1 in order TL,TR,BR,BL
+    src = np.array([[xn*out_w, yn*out_h] for (xn,yn) in bev_src_norm], dtype=np.float32)
+    dst = np.array([[0,0],[bev_w,0],[bev_w,bev_h],[0,bev_h]], dtype=np.float32)
+    H = cv2.getPerspectiveTransform(src, dst)
+    return H
+
+def warp_points(H, pts):
+    if H is None or len(pts)==0:
+        return pts
+    P = np.hstack([np.array(pts, dtype=np.float32), np.ones((len(pts),1),dtype=np.float32)])
+    P2 = (H @ P.T).T
+    P2 = P2[:, :2] / P2[:, 2:3]
+    return [(float(x), float(y)) for (x,y) in P2]
+
+def warp_to_bev(frame_bgr, H, bev_w, bev_h):
+    return cv2.warpPerspective(frame_bgr, H, (bev_w, bev_h), flags=cv2.INTER_LINEAR)
+
+def filter_points_in_rect(pts, w, h):
+    """Giữ các điểm nằm trong [0,w)×[0,h)."""
+    out = []
+    for (x, y) in pts:
+        if 0 <= x < w and 0 <= y < h:
+            out.append((x, y))
+    return out
+
+# --- feature extractor gốc (dùng cho ảnh thường hoặc BEV tuỳ ảnh đưa vào) ---
 def extract_feature_vector_from_lane(bgr, lane_xy):
     bits = bits_from_lane(
         bgr, lane_xy, stride=1,
@@ -174,7 +215,7 @@ def get_args():
     p.add_argument('config', help='path to config file (ví dụ: configs/culane_res34.py)')
     p.add_argument('--test_model', required=True, help='đường dẫn epXXX.pth bạn muốn dùng để infer')
     p.add_argument('--video', required=True, help='đường dẫn video đầu vào (mp4/avi...)')
-    p.add_argument('--out', default='out.avi', help='đường dẫn video xuất (mặc định out.avi)')
+    p.add_argument('--out', default='out.mp4', help='đường dẫn video xuất (mp4)')
     p.add_argument('--local_rank', type=int, default=0)
 
     # === NEW: MLP & drawing args ===
@@ -184,6 +225,19 @@ def get_args():
     p.add_argument('--thickness', type=int, default=3, help='độ dày polyline khi --draw line')
     p.add_argument('--dot_radius', type=int, default=3, help='bán kính chấm khi --draw dot')
     p.add_argument('--smooth_win', type=int, default=1, help='cửa sổ smoothing (majority vote); 1 = tắt')
+
+    # --- threshold & hood mask ---
+    p.add_argument('--dash_prob_thr', type=float, default=0.55, help='P(dashed) >= thr -> dashed (mặc định 0.55)')
+    p.add_argument('--mask_bottom_ratio', type=float, default=0.15, help='Che phần đáy ảnh theo tỉ lệ chiều cao (0..1). 0 = không mask. VD 0.15')
+    p.add_argument('--mask_poly', type=str, default='', help='Đa giác mask: "x1,y1;x2,y2;...". Bỏ trống nếu không dùng')
+    p.add_argument('--masked_lane_drop_thr', type=float, default=0.6, help='Nếu >thr điểm lane rơi trong mask thì bỏ lane (VD 0.6)')
+
+    # --- NEW: BEV ---
+    p.add_argument('--bev_enable', action='store_true', help='Bật BEV trước khi tạo chuỗi bit/feature cho MLP')
+    p.add_argument('--bev_w', type=int, default=640, help='Chiều rộng BEV')
+    p.add_argument('--bev_h', type=int, default=800, help='Chiều cao BEV')
+    p.add_argument('--bev_src_norm', type=str, default='0.20,0.65;0.80,0.65;0.98,0.98;0.02,0.98',
+                   help='4 điểm TL;TR;BR;BL theo tỉ lệ (0..1), ví dụ "0.20,0.65;0.80,0.65;0.98,0.98;0.02,0.98"')
     return p.parse_args()
 
 def build_transform(cfg):
@@ -199,6 +253,40 @@ def build_transform(cfg):
         T.ToTensor(),
         T.Normalize((0.485,0.456,0.406), (0.229,0.224,0.225)),
     ])
+
+# ========================= Hood-mask helpers =========================
+def build_mask(h, w, bottom_ratio=0.15, poly_str=''):
+    """
+    Tạo mask 0/255: 255 = vùng bị che (ca-bô).
+    - bottom_ratio: che đáy ảnh theo tỉ lệ chiều cao (0..1)
+    - poly_str: đa giác 'x1,y1;x2,y2;...'
+    """
+    mask = np.zeros((h, w), np.uint8)
+    if bottom_ratio > 0:
+        y0 = int(h * (1.0 - bottom_ratio))
+        cv2.rectangle(mask, (0, y0), (w-1, h-1), 255, -1)
+    if poly_str:
+        try:
+            pts = []
+            for pair in poly_str.split(';'):
+                x,y = pair.split(',')
+                pts.append([int(float(x)), int(float(y))])
+            if len(pts) >= 3:
+                pts = np.array(pts, dtype=np.int32).reshape(-1,1,2)
+                cv2.fillPoly(mask, [pts], 255)
+        except Exception:
+            pass
+    return mask
+
+def remove_masked_points(lane, mask):
+    """Loại các (x,y) nằm trong vùng mask=255."""
+    new_lane = []
+    H, W = mask.shape[:2]
+    for (x, y) in lane:
+        xi, yi = int(x), int(y)
+        if 0 <= yi < H and 0 <= xi < W and mask[yi, xi] != 255:
+            new_lane.append((x, y))
+    return new_lane
 
 # ========================= Drawing Helpers =========================
 COLOR_SOLID  = (0,   0, 255)  # đỏ (BGR)
@@ -265,28 +353,31 @@ if __name__ == "__main__":
         fps = 30.0
     out_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     out_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     vout = cv2.VideoWriter(args.out, fourcc, fps, (out_w, out_h))
 
     tfm = build_transform(cfg)
+
+    # BEV setup (tính 1 lần)
+    H_bev = None
+    if args.bev_enable:
+        bev_src_norm = parse_norm_quad(args.bev_src_norm)
+        H_bev = compute_H_from_norm(out_w, out_h, args.bev_w, args.bev_h, bev_src_norm)
 
     # optional temporal smoothing (per-lane-index buffer)
     smooth_win = max(1, int(args.smooth_win))
     buffers = defaultdict(lambda: deque(maxlen=smooth_win))
 
-    def classify_lane(frame_bgr, lane_xy):
-        feats = extract_feature_vector_from_lane(frame_bgr, lane_xy)
+    def classify_lane_generic(img_for_feat, lane_xy_for_feat, dash_prob_thr=0.55):
+        feats = extract_feature_vector_from_lane(img_for_feat, lane_xy_for_feat)
         xn = apply_standardizer(feats[None,:], mean_loaded, std_loaded)
         with torch.no_grad():
             logits = mlp(torch.from_numpy(xn).float().to(device))
-            # pred = int(torch.argmax(logits, dim=1).item())
             probs = F.softmax(logits, dim=1)[0]
-            p_solid, p_dashed = float(probs[0]), float(probs[1])
-            if p_dashed >= 0.4:
-                pred = 1  # dashed
-            else:
-                pred = 0  # solid
-        return pred  # 0=solid, 1=dashed
+            p_dashed = float(probs[1])
+            pred = 0 if p_dashed >= dash_prob_thr else 1
+        return pred
 
     frame_idx = 0
     with torch.no_grad():
@@ -310,16 +401,42 @@ if __name__ == "__main__":
                 original_image_height=img_h
             )
 
+            # --- Build hood mask cho frame hiện tại ---
+            mask = build_mask(img_h, img_w,
+                              bottom_ratio=args.mask_bottom_ratio,
+                              poly_str=args.mask_poly)
+
+            # Nếu BEV bật: warp ảnh một lần
+            if args.bev_enable and H_bev is not None:
+                bev_img = warp_to_bev(frame_bgr, H_bev, args.bev_w, args.bev_h)
+
             # Phân loại & vẽ
             for i, lane in enumerate(coords):
                 if not lane:
                     continue
-                yhat = classify_lane(frame_bgr, lane)
+
+                # lọc điểm trong vùng ca-bô trước khi dùng (trên ảnh gốc)
+                lane_use = remove_masked_points(lane, mask)
+                if len(lane_use) < 2:
+                    continue
+
+                if args.bev_enable and H_bev is not None:
+                    # warp toạ độ lane sang BEV và phân loại trên ảnh BEV
+                    lane_bev = warp_points(H_bev, lane_use)
+                    lane_bev_in = filter_points_in_rect(lane_bev, args.bev_w, args.bev_h)
+                    if len(lane_bev_in) < 2:
+                        continue
+                    yhat = classify_lane_generic(bev_img, lane_bev_in, dash_prob_thr=args.dash_prob_thr)
+                else:
+                    # phân loại trực tiếp trên ảnh gốc
+                    yhat = classify_lane_generic(frame_bgr, lane_use, dash_prob_thr=args.dash_prob_thr)
+
                 if smooth_win > 1:
                     buffers[i].append(yhat)
-                    # majority vote
                     vals = list(buffers[i])
                     yhat = int(round(np.mean(vals))) if vals else yhat
+
+                # vẽ lane gốc với nhãn đã phân loại
                 draw_lane(frame_bgr, lane, yhat, mode=args.draw, thickness=args.thickness, dot_radius=args.dot_radius)
 
             vout.write(frame_bgr)
